@@ -1,0 +1,310 @@
+---
+title: "A8_Walker_Charlie"
+author: "Charlie Walker"
+date: "2023-03-06"
+output: pdf_document
+---
+
+Link to [Github Repository](https://github.com/moonflwrz/BIOL432_Assignment8)
+
+Questions:
+
+1.  What effect (if any) does garlic mustard have on the plant community? [A]
+2.  What has a stronger effect on plant communities: the presence/absence of garlic mustard (in/out) or sampling population? [B]
+
+```{r data_setup}
+#loading libraries..
+library(ggplot2)
+library(ape)
+library(ggtree)
+library(vegan)
+library(dplyr)
+library(reshape2)
+library(MASS)
+library(colorBlindness)
+
+theme_set(theme_bw())
+
+#importing data.. 
+floristDat<-read.csv(
+  "FloristicSurvey.csv")
+
+#..stealing IDs from 'Quadrate' 
+IDs<-floristDat$Quadrate
+```
+
+### [A] ------------------
+
+```{r A_setup}
+#mutating all garlic columns into one..
+AflorDat <- floristDat %>% 
+  mutate(
+    Alliaria_petiolata = rowSums(
+      across(c('Rosettes', 'Bolting',
+               'Budding', 'Bud_Flw',
+               'Flower','Flw_Sil',
+               'Sillique')))) %>%
+  dplyr::select(1,11:45) %>%
+  relocate(Alliaria_petiolata, 
+           .before=Claytonia_virginiana)
+
+```
+
+#### A.1 - Stats
+
+For question A, we're interesting in quantifying the effect (if any) that garlic mustard has on the plant community.
+
+```{r A_stats}
+#getting rid of quad
+Af_binary<-AflorDat %>% 
+  dplyr::select(-1)
+
+#running a simple linear regression
+Af_lim<-lm(Alliaria_petiolata~.,
+           data=Af_binary)
+
+#model selection.. 
+BackSel<-stepAIC(Af_lim,
+                direction="backward")
+summary(BackSel)
+
+#QA/QC
+hist(residuals(BackSel), freq=F)
+shapiro.test(residuals(BackSel))
+plot(BackSel,1)
+
+```
+
+From our model summary, it looks like garlic mustard does indeed have an effect on the plant community- at least, the majority of species within the community. Out of the 27 species kept during model selection, 4 species are not effected by garlic mustard: *Acer saccharum,* Unknown_4, *Dryopteris marginalis*, and Grass.
+
+We've got some outliers, but our data is normally distributed. Since the dataset is already so small, let's not touch it further.
+
+#### A.2 - Distance Matrix
+
+We normally wouldn't use nested loops for this conversion as they're not efficient, but this dataset is very small- only 30 observations -so the wait time shouldn't be too long (depending on your pc).
+
+```{r A_distmat}
+
+#converting into binary..
+for (i in 1:nrow(Af_binary)){
+  for(j in 1:ncol(Af_binary)){
+    if(Af_binary[i,j]>0){
+      Af_binary[i,j]<-1
+    }
+  }
+}
+
+row.names(
+  Af_binary)<-IDs
+
+#calculating pairwise distance..
+Af_dist<-dist(
+  Af_binary, method="binary")
+
+#converting into matrix & melting..
+Af_distmat<-Af_dist %>% 
+  as.matrix() %>% 
+  melt()
+
+#plotting.. 
+ggplot(data=Af_distmat, aes(
+  x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradientn(
+    colors=c("#785EF0", "#DC267F",
+            "#FE6100", "#FFB000")) +
+  theme(axis.text.x=element_text(
+    angle=90, hjust=1, vjust=0.5))
+
+```
+
+Looking at our distance matrix, all of the 13ox quadrates are quite different from the rest. Looking at `AflorDat`, the 13ox quadrates mostly contain grass.
+
+#### A. 3 - NMDS
+
+```{r A_NMDS}
+
+set.seed(3)
+NMDSdat<-metaMDS(Af_dist,k=2,
+                 trymax=25)
+
+#Data for plotting.. 
+Af_PDat<-data.frame(
+  NMDS1=NMDSdat$points[,1],
+  NMDS2=NMDSdat$points[,2],
+  SampleID=row.names(Af_binary))
+
+#plotting..
+ggplot(data=Af_PDat,
+       aes(colour=IDs,
+           alpha=I(0.6))) +
+         geom_point(x=Af_PDat$NMDS1,
+                    y=Af_PDat$NMDS2) +
+  xlim(-0.4, 0.7) +
+  ylim(-0.3, 0.3) +
+  theme(axis.text=element_blank())
+```
+
+Take note of the cluster at the bottom- those 6 quadrates are very similar to each other.
+
+#### A.4 - Plot
+
+```{r A_plot, fig.cap="Above displays the relationship between garlic mustard (\\textit{Alliaria petiolata}) and neighbouring plant communities found at the Queen's University Biological Station (QUBS), represented by a count of individuals. Data is coloured & organized by sampling quadrate."}
+
+#further simplifying.. 
+AfplotDat<-AflorDat %>% 
+  mutate(flwr_community= rowSums(
+    across(c(2:3, 6:25, 26)))) %>% 
+    dplyr::select(1:2, 37)
+
+
+#plotting
+Aplot<-AfplotDat %>% 
+  ggplot(aes(x=Alliaria_petiolata,
+             y=flwr_community)) +
+  geom_point(aes(colour=Quadrate))
+print(Aplot)
+```
+
+It appears as if the majority of quadrates' flower communities kept within a range of 0-200 with a complementary garlic mustard range of approx. 0-80.
+
+Quadrates that fell out of that range saw extreme gains within both their flower communites & counts of garlic mustard.
+
+### [B] ------------------
+
+```{r B_setup}
+#Dropping garlic columns
+BflorDat<- floristDat %>% 
+  dplyr::select(1:3, 11:44)
+  
+```
+
+#### B.1 - Stats
+
+For question B, we're interested in determine which explanatory variable (garlic mustard presence or sampling population) has a stronger effect on plant communities.
+
+Let's run two linear models and then compare them to determine which fits our data better.
+
+```{r B_stats}
+#Recoding Location.. 
+BflorDat$Location<-recode(
+  BflorDat$Location,
+       o = 0,
+       i = 1)
+
+#Sampling population------
+B_popDat<- BflorDat %>% 
+  dplyr::select(2, 4:37)
+
+Bp_lim<-lm(Population~.,
+           data=B_popDat)
+
+Bp_Back<-stepAIC(Bp_lim,
+                direction="backward")
+summary(Bp_Back)
+AIC(Bp_Back)
+
+#Garlic Presence----------
+B_localDat<- BflorDat %>% 
+  dplyr::select(3:37)
+
+Bl_lim<-lm(Location~.,
+           data=B_localDat)
+
+Bl_Back<-stepAIC(Bl_lim,
+                direction="backward")
+summary(Bl_Back)
+AIC(Bl_Back)
+```
+
+By comparing model summaries & AIC scores, it appears that sampling population has a stronger effect on plant communities.
+
+#### B.2 - Distance Matrix
+
+```{r B_distmat}
+
+#same loop, differing dataset.. 
+Bf_binary<-B_popDat
+for (i in 1:nrow(Bf_binary)){
+  for(j in 1:ncol(Bf_binary)){
+    if(Bf_binary[i,j]>0){
+      Bf_binary[i,j]<-1
+    }
+  }
+}
+
+row.names(
+  Bf_binary)<-IDs
+
+#calculating pairwise distance..
+Bf_dist<-dist(
+  Bf_binary, method="binary")
+
+#converting into matrix & melting..
+Bf_distmat<-Bf_dist %>% 
+  as.matrix() %>% 
+  melt()
+
+#plotting.. 
+ggplot(data=Bf_distmat, aes(
+  x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradientn(
+    colors=c("#785EF0", "#DC267F",
+            "#FE6100", "#FFB000")) +
+  theme(axis.text.x=element_text(
+    angle=90, hjust=1, vjust=0.5))
+
+```
+
+It appears that in terms of our B dataset, most of the 3xx quadrates (save for 3i1) are identical. Additionally, quadrates in close proximity seem to be similar as well.
+
+Apart from that, the majority of quadrates are considerably different (\>0.5).
+
+#### B.3 - NMDS
+
+```{r B_NMDS}
+set.seed(3)
+NMDSdat<-metaMDS(Bf_dist,k=2,
+                 trymax=25)
+
+#Data for plotting.. 
+Bf_PDat<-data.frame(
+  NMDS1=NMDSdat$points[,1],
+  NMDS2=NMDSdat$points[,2],
+  SampleID=row.names(Bf_binary))
+
+#plotting..
+ggplot(data=Bf_PDat,
+       aes(colour=IDs,
+           alpha=I(0.6))) +
+         geom_point(x=Bf_PDat$NMDS1,
+                    y=Bf_PDat$NMDS2) +
+  xlim(-0.4, 0.7) +
+  ylim(-0.3, 0.3) +
+  theme(axis.text=element_blank())
+```
+
+Quadrates 14o2, 14o1, and 14i3 are very similar- as well as the previous similarities already outlined.
+
+#### B.4 - Plot
+
+```{r B_plot, fig.cap="Above displays the measure of non-garlic mustard (\\textit{Alliaria petiolata}) species (flwr_community) found at the Queen's University Biological Station (QUBS), represented as a count of individuals. Data is organized by sampling population ID, and coloured by sampling quadrate."}
+#further simplifying.. 
+BfplotDat<-BflorDat %>% 
+  mutate(flwr_community= rowSums(
+    across(c(2:27)))) %>% 
+   dplyr::select(1:2, 38)
+   
+BfplotDat$Population<-as.factor(
+  BfplotDat$Population)
+
+#plotting
+Bplot<-BfplotDat %>% 
+  ggplot(aes(x=Population,
+             y=flwr_community)) +
+  geom_point(aes(colour=Quadrate))
+print(Bplot)
+```
+
+Population 7 seems to have the highest measure of non-garlic mustard species within it's assigned quadrates. Interestingly, quadrates assigned from population 7 had both no contact (7o1, 7o2, 3o2) and high contact (7i1, 7i2, 3o3) with garlic mustard- with those in high contact with garlic mustard measured at a higher abundance.
