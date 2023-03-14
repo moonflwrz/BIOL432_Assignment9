@@ -1,0 +1,72 @@
+---
+title: "A9_Walker_Charlie"
+author: "Charlie Walker"
+date: "2023-03-13"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+Link to [Github Repository](https://github.com/moonflwrz/BIOL432_Assignment9)
+
+```{r data_setup}
+#loading libraries..
+library(doParallel)
+library(parallel)
+library(foreach)
+
+#Grabbing # of cores & making cluster
+Cores<-makeCluster(detectCores())
+```
+
+My PC has an Intel i7-10750H with 6 Cores and 12 total threads.
+
+Let's run the serial loop first..
+
+```{r serial_loopin}
+#Baseline time
+B4Time<-Sys.time()
+
+#Loop
+for (i in 1:4000){
+  mean(rnorm(1000000, 10, 3))
+}
+
+#Finished loop time
+AFTime<-Sys.time()
+```
+
+The serial loop took 4 minutes & 13 seconds to run.
+
+How much faster will the parallel loop be? Using a simplified version of Amdahl's Law.. $$
+S(n) = \frac{1}{(1-P) + \frac{P}{n}}
+$$ .. where $S(n)$ is the theoretical speedup, P is the fraction of the algorithm that can be made parallel, and n is the number of CPU threads..
+
+$$
+S(n) = \frac{1}{(1-1) + \frac{1}{12}} = 12
+$$ So, theoretically, we should see a 12x increase in speed- or the parallel loop will take \~35 seconds.
+
+Now, let's run the parallel loop..
+
+```{r parallel_loopin, results='hide'}
+
+#Baseline time
+Par_B4Time<-Sys.time()
+
+#Loop 
+registerDoParallel(Cores) #activate multi-thread
+
+foreach(i = 1:4000, .combine=rbind) %dopar% {
+  mean(rnorm(1000000, 10, 3))
+}
+
+stopCluster(Cores) #de-activate multi-thread
+
+#Finished loop time
+Par_AFTime<-Sys.time()
+
+```
+
+The parallel loop took only 37 seconds, quicker than the serial loop by 3 minutes & 36 seconds! Though, our estimate was quicker by 2 seconds.
+
+My PC runs accessibility-related software that I did not turn off during the parallel loop, which may have been the cause of the 2 second delay compared to the theoretical time calculated.
